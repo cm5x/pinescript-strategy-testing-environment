@@ -1,0 +1,192 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// This strategy has been created for illustration purposes only and should not be relied upon as a basis for buying, selling, or holding any asset or security.
+// © cmx5
+
+//@version=5
+strategy(
+     "MAGPE Semantic-1",
+     overlay=true,
+     calc_on_every_tick=false,
+     currency=currency.USD,
+     default_qty_type = strategy.percent_of_equity,
+     default_qty_value = 100
+     )
+
+// INPUT:
+
+// Options to enter fast and slow Exponential Moving Average (EMA) values
+emaFast = input.int(title="Fast EMA", defval=10, minval=1, maxval=9999)
+emaSlow = input.int(title="Slow EMA", defval=20, minval=1, maxval=9999)
+emaTest1 = input.int(title="Test EMA", defval=5, minval=1, maxval=9999)
+emaTest2 = input.int(title="Test EMA", defval=200, minval=1, maxval=9999)
+
+// Option to select trade directions
+tradeDirection = input.string(title="Trade Direction", options=["Long", "Short", "Both"], defval="Both")
+useStrategyTimout = input.bool(true, title = "Use Strategy Timeout")
+useTPSL = input.bool(false, title = "Use TP & SL instead of conventional.")
+useTrailingStop = input.bool(false, title = "Use Trailing Stop for open positions.")
+takeProfitPercent = input.float(title = "TP Percent", defval = 2)
+stopLossPercent = input.float(title = "SL Percent", defval = 1)
+
+// Options that configure the backtest date range
+startDate = input.time(title="Start Date", defval=timestamp("01 Jan 1970 00:00"))
+endDate = input.time(title="End Date", defval=timestamp("31 Dec 2170 23:59"))
+
+
+// CALCULATIONS:
+
+// Use the built-in function to calculate two EMA lines
+fastEMA = ta.ema(close, emaFast)
+slowEMA = ta.ema(close, emaSlow)
+testEMA1 = ta.ema(close,emaTest1)
+testEMA2 = ta.ema(close,emaTest2)
+// PLOT:
+
+// Draw the EMA lines on the chart
+plot(series=fastEMA, color=color.orange, linewidth=2, title = "fastEMA")
+plot(series=slowEMA, color=color.blue, linewidth=2, title = "slowEMA")
+plot(series=testEMA1, color = #2ab884,linewidth = 2, title = "testEMA1" )
+plot(series=testEMA2, color = #2ab884,linewidth = 2, title = "fastEMA2" )
+
+
+// CONDITIONS:
+
+// Check if the close time of the current bar falls inside the date range
+inDateRange = (time >= startDate) and (time < endDate)
+
+// Translate input into trading conditions
+longOK  = (tradeDirection == "Long") or (tradeDirection == "Both")
+shortOK = (tradeDirection == "Short") or (tradeDirection == "Both")
+
+// Decide if we should go long or short using the built-in functions
+longCondition = ta.crossover(fastEMA, slowEMA)
+shortCondition = ta.crossunder(fastEMA, slowEMA)
+
+
+//++
+//++
+//INDICATORS
+
+//BOLLINGER BANDS
+
+// INPUTS
+showBollingerBands= input.bool(true, title="Show Bollinger Bands",
+     group="Bollinger Bands")
+showVolatility= input.bool(true, title="Show Volatility Data", group="Bollinger Bands")
+showVolume = input.bool(false,title = "Show volume&MA charts", group = "Bollinger Bands")
+
+length = input.int(title=" Bollinger Length", defval=20, minval=1)
+src = input.source(title="Bollinger Source", defval=close)
+mult = input.float(title="Bollinger Multiplier", defval=2.0, minval=0.1)
+volatilityMLTP = input.int(title = "Volatility MLTP for Tests", defval = 100, minval =1 )
+
+// CALCULATIONS
+basis = ta.sma(src, length)
+dev = mult * ta.stdev(src, length)
+upper = basis + dev
+lower = basis - dev
+width = upper - lower  // Bollinger Bands width
+
+// PLOT
+// plot(basis, color=color.blue, linewidth=2, title="Basis")
+// plot(upper, color=color.red, linewidth=2, title="Upper Band")
+// plot(lower, color=color.green, linewidth=2, title="Lower Band")
+// fill(plot1=upper, plot2=lower, color=color.new(color.red, 90), title="Background")
+
+p1 = plot(basis, color=color.blue, linewidth=2, title="Basis")
+p2 = plot(upper, color=color.red, linewidth=2, title="Upper Band")
+p3 = plot(lower, color=color.green, linewidth=2, title="Lower Band")
+
+// Conditional fill
+fill(p1, p2, color=(showBollingerBands ? color.new(color.red, 90) : na), title="Upper Fill")
+fill(p1, p3, color=(showBollingerBands ? color.new(color.green, 90) : na), title="Lower Fill")
+
+// HIGHLIGHTING CONDITIONS (optional)
+bgcolor(showBollingerBands and ta.crossover(close, upper) ? color.new(color.red, 90) : na)
+bgcolor(showBollingerBands and ta.crossover(close, lower) ? color.new(color.green, 90) : na)
+
+// VOLATILITY
+
+volatility = (width / basis) * 100 * volatilityMLTP // Volatility percentage
+// plot(volatility, title="Volatility", color=color.purple, linewidth=2)
+plot(showVolatility ? volatility : na, title="Volatility", color=color.purple, linewidth=2)
+
+
+// Conditional label display for volatility
+var label volLabel = na
+if (showVolatility)
+    if (na(volLabel))
+        volLabel := label.new(x=bar_index, y=na, text="Volatility: " + str.tostring(volatility, format.percent), style=label.style_label_down, color=color.white, textcolor=color.black)
+    else
+        label.set_xy(volLabel, bar_index, na)
+        label.set_text(volLabel, "Volatility: " + str.tostring(volatility, format.percent))
+else
+    if (not na(volLabel))
+        label.delete(volLabel)
+        volLabel := na
+
+//Variables
+var int entryBar = na
+
+// Inputs
+lengthVol = input.int(title="MA Length of Volume Chart", defval=20, minval=1)
+Timeout = input(10, title='Strategy Timeout (bars)')
+
+// Calculations
+volumeMA = ta.sma(volume, lengthVol)
+
+
+// Plot
+// plot(volume, title="Volume", color=color.blue, style=plot.style_histogram, linewidth=1)
+// plot(volumeMA, title="20-period MA", color=color.red, linewidth=2)
+
+plot(showVolume ? volume : na, title = "Volume", color = color.blue , style=plot.style_histogram, linewidth=1)
+plot(showVolume ? volumeMA : na, title = "VolumeMA", color = color.red , linewidth=1)
+
+//HACIMCANAVARI SXX
+triggerPercentage = input.float(title="Trigger Percentage", defval=300.0, minval=0.0)
+lowestVolume = ta.lowest(volume[20], length)
+triggerCondition = (volumeMA >= lowestVolume * (1 + triggerPercentage / 100))
+plotshape(series=triggerCondition, location=location.abovebar, color=color.purple, style=shape.cross, title="Volume Trigger Signal")
+
+// Take profit and stop loss prices
+longTakeProfitPrice = strategy.position_avg_price * (1 + takeProfitPercent)
+longStopLossPrice = strategy.position_avg_price * (1 - stopLossPercent)
+shortTakeProfitPrice = strategy.position_avg_price * (1 - takeProfitPercent)
+shortStopLossPrice = strategy.position_avg_price * (1 + stopLossPercent)
+
+
+// ORDERS:
+
+// Submit entry (or reverse) orders
+if (longCondition and inDateRange and triggerCondition)
+    strategy.entry(id="long", direction=strategy.long, when=longOK)
+    entryBar := bar_index
+if (shortCondition and inDateRange and triggerCondition)
+    strategy.entry(id="short", direction=strategy.short, when=shortOK)
+    entryBar := bar_index
+
+
+// Submit exit orders
+if (useTPSL and  strategy.position_size > 0)
+    strategy.exit("Take Profit/Stop Loss", from_entry="long", limit=longTakeProfitPrice, stop=longStopLossPrice)
+if (useTPSL and strategy.position_size < 0)
+    strategy.exit("Take Profit/Stop Loss", from_entry="short", limit=shortTakeProfitPrice, stop=shortStopLossPrice)
+
+
+// // Submit exit orders in the cases where we trade only long or only short
+// if (strategy.position_size > 0 and shortCondition)
+//     strategy.exit(id="exit long", from_entry="long")
+// if (strategy.position_size < 0 and longCondition)
+//     strategy.exit(id="exit short", from_entry="short")  
+// Submit exit orders in the cases where we trade only long or only short
+if (strategy.position_size > 0 and shortCondition and triggerCondition)
+    strategy.close(id="long")
+if (strategy.position_size < 0 and longCondition and triggerCondition)
+    strategy.close(id="short")
+
+
+    // Check for timeout
+if not na(entryBar) and bar_index >= entryBar + Timeout
+    string alert_closeAll = "type=closeAll, price=" + str.tostring(close)
+    strategy.close_all(alert_message= alert_closeAll)
